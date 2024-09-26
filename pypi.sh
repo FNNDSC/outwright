@@ -38,6 +38,6 @@ git push origin --tags
 #rstcheck README.rst
 python3 setup.py sdist
 cd $DIR
-twine upload dist/outwright-${VER}.tar.gz
+twine upload dist/outlook_email_sender-${VER}.tar.gz
 
 
