@@ -23,7 +23,7 @@ def readme():
 
 setup(
     name="outlook_email_sender",
-    version="1.0.2",
+    version="1.0.4",
     description="A Python package for authenticating to Outlook Web and sending emails using Playwright.",
     long_description=readme(),
     author="Rudolph Pienaar",
