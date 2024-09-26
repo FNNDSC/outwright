@@ -53,7 +53,7 @@ pip install -U ./
 Alternatively, simply do
 
 ```
-pip install -U outright
+pip install -U outlook_email_sender
 ```
 
 == running
