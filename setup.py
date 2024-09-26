@@ -16,10 +16,16 @@ def parse_requirements(file_path: str) -> list[str]:
     return Path(file_path).read_text().splitlines()
 
 
+def readme():
+    with open("README.rst") as f:
+        return f.read()
+
+
 setup(
     name="outlook_email_sender",
-    version="1.0.0",
+    version="1.0.2",
     description="A Python package for authenticating to Outlook Web and sending emails using Playwright.",
+    long_description=readme(),
     author="Rudolph Pienaar",
     author_email="rudolph.pienaar@childrens.harvard.edu",
     packages=find_packages(where="src"),  # Point to src directory for modules
