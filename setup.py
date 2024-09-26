@@ -18,7 +18,7 @@ def parse_requirements(file_path: str) -> list[str]:
 
 setup(
     name="outlook_email_sender",
-    version="0.1.0",
+    version="1.0.0",
     description="A Python package for authenticating to Outlook Web and sending emails using Playwright.",
     author="Rudolph Pienaar",
     author_email="rudolph.pienaar@childrens.harvard.edu",
