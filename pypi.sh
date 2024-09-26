@@ -38,6 +38,6 @@ git push origin --tags
 #rstcheck README.rst
 python3 setup.py sdist
 cd $DIR
-twine upload dist/spleenseg-${VER}.tar.gz
+twine upload dist/outwright-${VER}.tar.gz
 
 
