@@ -41,6 +41,7 @@ def send_argparse() -> Namespace:
     parser.add_argument(
         "--password", default="password", type=str, help="user password"
     )
+    parser.add_argument("--username", default="", type=str, help="internal username")
     parser.add_argument(
         "--notification",
         default="/tmp/notification.txt",
@@ -51,7 +52,9 @@ def send_argparse() -> Namespace:
     return options
 
 
-async def send_email(context: BrowserContext, email_details: EmailDetails) -> bool:
+async def send_email(
+    context: BrowserContext, options: Namespace, email_details: EmailDetails
+) -> bool:
     try:
         page = context.pages[0]  # Use the existing page
 
@@ -64,8 +67,9 @@ async def send_email(context: BrowserContext, email_details: EmailDetails) -> bo
         for i, recipient in enumerate(recipients):
             await page.fill('[aria-label="To"]', recipient.strip())
             if i < len(recipients) - 1:  # If it's not the last recipient
-                await page.keyboard.type(",")  # Add an explicit comma
-                await page.keyboard.press("Space")  # Add a space after the comma
+                await page.keyboard.press(
+                    "Enter"
+                )  # Add a new line for the next recipient
 
         await page.fill('[placeholder="Add a subject"]', email_details.subject.strip())
         await page.keyboard.press("Tab")  # Move to the body
@@ -76,10 +80,11 @@ async def send_email(context: BrowserContext, email_details: EmailDetails) -> bo
         await page.keyboard.type(body)
 
         LOG("Sending email")
-        await page.keyboard.press("Control+Enter")
+        await page.click('[aria-label="Send"]')
 
-        LOG("Waiting for email sent confirmation")
-        await page.wait_for_selector("#EmptyState_MainMessage", timeout=30000)
+        if not options.username:
+            LOG("Waiting for email sent confirmation")
+            await page.wait_for_selector('[aria-label="Mail sent"]', timeout=30000)
 
         LOG(f"Email sent to {email_details.recipient}.")
         return True
@@ -88,7 +93,9 @@ async def send_email(context: BrowserContext, email_details: EmailDetails) -> bo
         return False
 
 
-async def listen_for_email_requests(context: BrowserContext, triggerFile: Path) -> None:
+async def listen_for_email_requests(
+    context: BrowserContext, options: Namespace, triggerFile: Path
+) -> None:
     LOG("Waiting for email notifications...")
     while True:
         try:
@@ -104,7 +111,7 @@ async def listen_for_email_requests(context: BrowserContext, triggerFile: Path) 
                     recipient=recipient, subject=subject, body_file=body_file
                 )
 
-                email_sent: bool = await send_email(context, email_details)
+                email_sent: bool = await send_email(context, options, email_details)
                 if email_sent:
                     os.remove(triggerFile)
                     LOG(f"Notification file processed and removed: {triggerFile}")
@@ -122,8 +129,7 @@ async def listen_for_email_requests(context: BrowserContext, triggerFile: Path) 
 async def async_main() -> None:
     options: Namespace = send_argparse()
     config: OutlookConfig = OutlookConfig(
-        email=options.email,
-        password=options.password,
+        email=options.email, password=options.password, username=options.username
     )
 
     playwright, browser, context = await setup_browser()
@@ -138,7 +144,9 @@ async def async_main() -> None:
         if authenticated:
             LOG("Authentication successful. The script will now run indefinitely.")
             LOG("Press Ctrl+C to stop the script at any time.")
-            await listen_for_email_requests(context, Path(options.notification))
+            await listen_for_email_requests(
+                context, options, Path(options.notification)
+            )
         else:
             LOG("Failed to authenticate. Exiting.")
     except KeyboardInterrupt:

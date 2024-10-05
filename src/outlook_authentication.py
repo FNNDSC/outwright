@@ -32,6 +32,7 @@ logger.add(sys.stderr, format=logger_format)
 class OutlookConfig:
     email: str
     password: str
+    username: str
     outlook_url: str = "https://outlook.office.com"
 
 
@@ -44,7 +45,6 @@ async def setup_browser() -> (
         context: BrowserContext = await browser.new_context(no_viewport=True)
 
         if context is not None:
-            # Set an extremely high timeout for the context (essentially infinite)
             context.set_default_timeout(2147483647)  # Maximum 32-bit integer value
             LOG("Browser context created with extended timeout.")
         else:
@@ -59,32 +59,30 @@ async def setup_browser() -> (
 async def authenticate_outlook(context: BrowserContext, config: OutlookConfig) -> bool:
     try:
         page: Page = await context.new_page()
+
         LOG(f"Navigating to {config.outlook_url}")
         await page.goto(config.outlook_url)
+
         LOG("Filling email")
         await page.fill('input[type="email"]', config.email)
         await page.click('input[type="submit"]')
-        LOG("Waiting for organizational login page")
-        await page.wait_for_selector("#userNameInput", timeout=60000)
-        await page.fill("#userNameInput", config.email)
-        await page.fill("#passwordInput", config.password)
-        await page.click("#submitButton")
 
-        LOG("Checking for 'Is this your device?' prompt")
-        try:
-            await page.wait_for_selector("#trust-browser-button", timeout=60000)
-            await page.click("#trust-browser-button")
-            LOG("Clicked 'Yes, this is my device'")
-        except PlaywrightTimeoutError:
-            LOG("No 'Is this your device?' prompt detected. Continuing...")
+        if config.username:
+            LOG("Internal authentication -- please handle the authentication manually")
+        else:
+            LOG("Using external authentication flow")
+            LOG("Waiting for password input")
+            await page.wait_for_selector('input[type="password"]', timeout=60000)
+            await page.fill('input[type="password"]', config.password)
+            await page.click('input[type="submit"]')
 
-        LOG("Checking for 'Stay signed in?' prompt")
-        try:
-            await page.wait_for_selector("#idSIButton9", timeout=60000)
-            await page.click("#idSIButton9")
-            LOG("Clicked 'Stay signed in'")
-        except PlaywrightTimeoutError:
-            LOG("No 'Stay signed in?' prompt detected. Continuing...")
+            LOG("Checking for 'Stay signed in?' prompt")
+            try:
+                await page.wait_for_selector("#idSIButton9", timeout=60000)
+                await page.click("#idSIButton9")
+                LOG("Clicked 'Stay signed in'")
+            except PlaywrightTimeoutError:
+                LOG("No 'Stay signed in?' prompt detected. Continuing...")
 
         LOG("Waiting for the final page to load")
         await page.wait_for_selector('[aria-label="New mail"]', timeout=60000)
@@ -104,6 +102,8 @@ def auth_argparse() -> Namespace:
     parser.add_argument(
         "--password", default="password", type=str, help="user password"
     )
+    parser.add_argument("--username", default="", type=str, help="internal username")
+
     options: Namespace = parser.parse_args()
     return options
 
@@ -111,10 +111,13 @@ def auth_argparse() -> Namespace:
 async def authenticate() -> None:
     options: Namespace = auth_argparse()
     config: OutlookConfig = OutlookConfig(
-        email=options.email, password=options.password
+        email=options.email, password=options.password, username=options.username
     )
     playwright, browser, context = await setup_browser()
     try:
+        if not context:
+            LOG("Browser context was not defined. Critical error")
+            return
         authenticated: bool = await authenticate_outlook(context, config)
         if authenticated:
             LOG("Authentication was successful. You can proceed with sending emails.")
