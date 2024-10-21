@@ -70,11 +70,18 @@ async def authenticate_outlook(context: BrowserContext, config: OutlookConfig) -
         if config.username:
             LOG("Internal authentication -- please handle the authentication manually")
         else:
-            LOG("Using external authentication flow")
-            LOG("Waiting for password input")
-            await page.wait_for_selector('input[type="password"]', timeout=60000)
-            await page.fill('input[type="password"]', config.password)
-            await page.click('input[type="submit"]')
+            await page.wait_for_selector("#userNameInput", timeout=60000)
+            await page.fill("#userNameInput", config.email)
+            await page.fill("#passwordInput", config.password)
+            await page.click("#submitButton")
+
+            LOG("Checking for 'Is this your device?' prompt")
+            try:
+                await page.wait_for_selector("#trust-browser-button", timeout=60000)
+                await page.click("#trust-browser-button")
+                LOG("Clicked 'Yes, this is my device'")
+            except PlaywrightTimeoutError:
+                LOG("No 'Is this your device?' prompt detected. Continuing...")
 
             LOG("Checking for 'Stay signed in?' prompt")
             try:
