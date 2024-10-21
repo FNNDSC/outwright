@@ -67,9 +67,8 @@ async def send_email(
         for i, recipient in enumerate(recipients):
             await page.fill('[aria-label="To"]', recipient.strip())
             if i < len(recipients) - 1:  # If it's not the last recipient
-                await page.keyboard.press(
-                    "Enter"
-                )  # Add a new line for the next recipient
+                await page.keyboard.type(",")  # Add an explicit comma
+                await page.keyboard.press("Space")  # Add a space after the comma
 
         await page.fill('[placeholder="Add a subject"]', email_details.subject.strip())
         await page.keyboard.press("Tab")  # Move to the body
