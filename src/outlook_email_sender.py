@@ -83,7 +83,7 @@ async def send_email(
 
         if not options.username:
             LOG("Waiting for email sent confirmation")
-            await page.wait_for_selector('[aria-label="Mail sent"]', timeout=30000)
+            await page.wait_for_selector("#EmptyState_MainMessage", timeout=30000)
 
         LOG(f"Email sent to {email_details.recipient}.")
         return True
