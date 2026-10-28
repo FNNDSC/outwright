@@ -34,6 +34,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from loguru import logger
+
+LOG = logger.debug
 from playwright.async_api import (
     Browser,
     BrowserContext,
@@ -93,7 +95,7 @@ async def resource_close(
     try:
         await closeAction()
     except PlaywrightError as error:
-        logger.error("Failed to close {}: {}", resourceName, error)
+        LOG("Failed to close {}: {}", resourceName, error)
 
 
 async def browser_setup() -> (
@@ -114,10 +116,10 @@ async def browser_setup() -> (
         browser = await playwright.chromium.launch(headless=False)
         context = await browser.new_context(no_viewport=True)
         context.set_default_timeout(defaultTimeoutMs)
-        logger.debug("Browser context created.")
+        LOG("Browser context created.")
         return playwright, browser, context
     except PlaywrightError as error:
-        logger.error("Error setting up browser: {}", error)
+        LOG("Error setting up browser: {}", error)
         if context is not None:
             await resource_close(context.close, "browser context")
         if browser is not None:
@@ -149,15 +151,15 @@ async def outlook_authenticate(
     try:
         page: Page = await context.new_page()
 
-        logger.debug("Navigating to {}", config.outlook_url)
+        LOG("Navigating to {}", config.outlook_url)
         await page.goto(config.outlook_url)
 
-        logger.debug("Filling email")
+        LOG("Filling email")
         await page.fill('input[type="email"]', config.email)
         await page.click('input[type="submit"]')
 
         if config.username:
-            logger.debug(
+            LOG(
                 "Internal authentication -- "
                 "please handle the authentication manually"
             )
@@ -169,39 +171,39 @@ async def outlook_authenticate(
             await page.fill("#passwordInput", config.password)
             await page.click("#submitButton")
 
-            logger.debug("Checking for 'Is this your device?' prompt")
+            LOG("Checking for 'Is this your device?' prompt")
             try:
                 await page.wait_for_selector(
                     "#trust-browser-button", timeout=authWaitTimeoutMs
                 )
                 await page.click("#trust-browser-button")
-                logger.debug("Clicked 'Yes, this is my device'")
+                LOG("Clicked 'Yes, this is my device'")
             except PlaywrightTimeoutError:
-                logger.debug(
+                LOG(
                     "No 'Is this your device?' prompt detected. "
                     "Continuing..."
                 )
 
-            logger.debug("Checking for 'Stay signed in?' prompt")
+            LOG("Checking for 'Stay signed in?' prompt")
             try:
                 await page.wait_for_selector(
                     "#idSIButton9", timeout=authWaitTimeoutMs
                 )
                 await page.click("#idSIButton9")
-                logger.debug("Clicked 'Stay signed in'")
+                LOG("Clicked 'Stay signed in'")
             except PlaywrightTimeoutError:
-                logger.debug(
+                LOG(
                     "No 'Stay signed in?' prompt detected. Continuing..."
                 )
 
-        logger.debug("Waiting for the final page to load")
+        LOG("Waiting for the final page to load")
         await page.wait_for_selector(
             '[aria-label="New mail"]', timeout=authWaitTimeoutMs
         )
-        logger.debug("Authenticated successfully.")
+        LOG("Authenticated successfully.")
         return True
     except PlaywrightError as error:
-        logger.error("Error during authentication: {}", error)
+        LOG("Error during authentication: {}", error)
         return False
 
 
@@ -242,16 +244,16 @@ async def authentication_run() -> None:
     playwright, browser, context = await browser_setup()
     try:
         if context is None:
-            logger.error("Browser context was not defined. Critical error")
+            LOG("Browser context was not defined. Critical error")
             return
         authenticated: bool = await outlook_authenticate(context, config)
         if authenticated:
-            logger.info(
+            LOG(
                 "Authentication was successful. "
                 "You can proceed with sending emails."
             )
         else:
-            logger.error(
+            LOG(
                 "Authentication failed. "
                 "Please check your credentials and try again."
             )

@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
+
+LOG = logger.debug
 from playwright.async_api import BrowserContext, Locator, Page
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -171,7 +173,7 @@ async def ccRecipients_fill(page: Page, ccCsv: str) -> None:
         await page.get_by_role("button", name="Cc").click()
         await recipients_fill(page, '[aria-label="Cc"]', ccCsv)
     except PlaywrightError as error:
-        logger.warning("Could not fill Cc recipients ({}): {}", ccCsv, error)
+        LOG("Could not fill Cc recipients ({}): {}", ccCsv, error)
 
 
 async def sendConfirmation_wait(
@@ -247,12 +249,12 @@ async def email_send(
     try:
         page: Page = await outlookPage_get(context)
 
-        logger.debug("Clicking 'New mail'")
+        LOG("Clicking 'New mail'")
         await page.click('[aria-label="New mail"]')
         await page.wait_for_selector('[aria-label="To"]')
 
-        logger.debug("Filling email details")
-        logger.debug("Internal sign-in mode: {}", bool(options.username))
+        LOG("Filling email details")
+        LOG("Internal sign-in mode: {}", bool(options.username))
         await recipients_fill(page, '[aria-label="To"]', emailDetails.recipient)
         if emailDetails.cc.strip():
             await ccRecipients_fill(page, emailDetails.cc)
@@ -260,7 +262,7 @@ async def email_send(
             '[placeholder="Add a subject"]', emailDetails.subject.strip()
         )
 
-        logger.debug("Adding email body")
+        LOG("Adding email body")
         bodyText: str = await asyncio.to_thread(
             Path(emailDetails.body_file).read_text, encoding="utf-8"
         )
@@ -270,21 +272,21 @@ async def email_send(
         await bodyEditor.click()
         await bodyEditor.fill(bodyText.strip())
 
-        logger.debug("Sending email")
+        LOG("Sending email")
         await page.click('[aria-label="Send"]')
 
-        logger.debug("Waiting for email sent confirmation")
+        LOG("Waiting for email sent confirmation")
         if not await sendConfirmation_wait(page):
-            logger.error(
+            LOG(
                 "No send confirmation observed; "
                 "the email may not have been sent."
             )
             return False
 
-        logger.debug("Email sent to {}.", emailDetails.recipient)
+        LOG("Email sent to {}.", emailDetails.recipient)
         return True
     except (PlaywrightError, OSError) as error:
-        logger.error("Error sending email: {}", error)
+        LOG("Error sending email: {}", error)
         return False
 
 
@@ -303,11 +305,11 @@ async def emailRequests_listen(
         options: Sender CLI options.
         triggerFile: Path of the notification file to watch.
     """
-    logger.debug("Waiting for email notifications...")
+    LOG("Waiting for email notifications...")
     while True:
         try:
             if triggerFile.is_file():
-                logger.debug("Notification file found: {}", triggerFile)
+                LOG("Notification file found: {}", triggerFile)
                 notificationText: str = await asyncio.to_thread(
                     triggerFile.read_text, encoding="utf-8"
                 )
@@ -315,7 +317,7 @@ async def emailRequests_listen(
                     notificationText.splitlines()
                 )
                 if len(notificationLines) < notificationLinesExpected:
-                    logger.error(
+                    LOG(
                         "Malformed notification file (expected {} lines, "
                         "got {}): {}. Moving it aside.",
                         notificationLinesExpected,
@@ -336,12 +338,12 @@ async def emailRequests_listen(
                     )
                     if emailSent:
                         await asyncio.to_thread(triggerFile.unlink)
-                        logger.debug(
+                        LOG(
                             "Notification file processed and removed: {}",
                             triggerFile,
                         )
                     else:
-                        logger.error(
+                        LOG(
                             "Failed to send email. Moving notification "
                             "file aside: {}",
                             triggerFile,
@@ -351,7 +353,7 @@ async def emailRequests_listen(
                             Path(f"{triggerFile}.failed"),
                         )
         except (OSError, PlaywrightError, UnicodeDecodeError) as error:
-            logger.error("Error in emailRequests_listen: {}", error)
+            LOG("Error in emailRequests_listen: {}", error)
 
         await asyncio.sleep(notificationPollSeconds)
 
@@ -372,29 +374,29 @@ async def sender_run() -> None:
     playwright, browser, context = await browser_setup()
 
     if playwright is None or browser is None or context is None:
-        logger.error("Failed to set up browser. Exiting.")
+        LOG("Failed to set up browser. Exiting.")
         return
 
     try:
-        logger.debug("Starting authentication process...")
+        LOG("Starting authentication process...")
         authenticated: bool = await outlook_authenticate(context, config)
         if authenticated:
-            logger.debug(
+            LOG(
                 "Authentication successful. "
                 "The script will now run indefinitely."
             )
-            logger.debug("Press Ctrl+C to stop the script at any time.")
+            LOG("Press Ctrl+C to stop the script at any time.")
             await emailRequests_listen(
                 context, options, Path(options.notification)
             )
         else:
-            logger.error("Failed to authenticate. Exiting.")
+            LOG("Failed to authenticate. Exiting.")
     except KeyboardInterrupt:
-        logger.debug("\nScript terminated by user.")
+        LOG("\nScript terminated by user.")
     except (PlaywrightError, OSError) as error:
-        logger.error("An error occurred in sender_run: {}", error)
+        LOG("An error occurred in sender_run: {}", error)
     finally:
-        logger.debug("Cleaning up resources...")
+        LOG("Cleaning up resources...")
         await resource_close(context.close, "browser context")
         await resource_close(browser.close, "browser")
         await resource_close(playwright.stop, "playwright driver")
