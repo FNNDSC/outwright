@@ -1,5 +1,6 @@
-from setuptools import setup, find_packages
 from pathlib import Path
+
+from setuptools import find_packages, setup
 
 
 # Read the contents of requirements.txt
@@ -17,8 +18,10 @@ def parse_requirements(file_path: str) -> list[str]:
 
 
 def readme():
-    with open("README.rst") as f:
-        return f.read()
+    readme_path = Path("README.adoc")
+    if readme_path.exists():
+        return readme_path.read_text()
+    return ""
 
 
 setup(
@@ -33,7 +36,7 @@ setup(
     install_requires=parse_requirements("requirements.txt"),
     entry_points={
         "console_scripts": [
-            "outwright=outlook_email_sender:main",  # Bind the main function to 'outwright' command
+            "outwright=outlook_email_sender:outwright_main",  # Bind the entry point to 'outwright' command
         ],
     },
     classifiers=[

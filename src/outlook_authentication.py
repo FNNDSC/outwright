@@ -1,22 +1,50 @@
-# outlook_authentication.py
+"""Outlook Web authentication via Playwright.
+
+This module launches a Chromium browser through Playwright and signs a
+user into Outlook Web (https://outlook.office.com). It supports two
+sign-in modes: a direct credential fill for plain Microsoft accounts,
+and an "internal" mode (used behind institutional single sign-on, e.g.
+a hospital IdP) where the human completes the sign-in interactively in
+the browser window while this module simply waits for the Outlook
+mailbox UI to appear.
+
+Key components:
+    - OutlookConfig: Dataclass holding the sign-in parameters.
+    - browser_setup: Launch Chromium and create a browser context.
+    - outlook_authenticate: Drive the Outlook Web sign-in flow.
+    - resource_close: Best-effort close of a partially started resource.
+    - authOptions_parse: Parse the command-line options.
+    - authentication_run: Asynchronous CLI entry point.
+
+Typical usage:
+    python outlook_authentication.py --email me@example.com \\
+        --password secret
+
+Dependencies:
+    - playwright: Browser automation (Chromium).
+    - loguru: Structured logging to stderr.
+"""
+
+from __future__ import annotations
+
 import asyncio
+import sys
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, Namespace
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+
+from loguru import logger
 from playwright.async_api import (
-    async_playwright,
-    BrowserContext,
     Browser,
+    BrowserContext,
     Page,
     Playwright,
-    TimeoutError as PlaywrightTimeoutError,
+    async_playwright,
 )
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from typing import Optional
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter, Namespace
-import sys
-from loguru import logger
-
-LOG = logger.debug
-logger_format = (
+loggerFormat: str = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> │ "
     "<level>{level: <5}</level> │ "
     "<yellow>{name: >28}</yellow>::"
@@ -25,82 +53,164 @@ logger_format = (
     "<level>{message}</level>"
 )
 logger.remove()
-logger.add(sys.stderr, format=logger_format)
+logger.add(sys.stderr, format=loggerFormat)
+
+defaultTimeoutMs: int = 30_000
+authWaitTimeoutMs: int = 60_000
 
 
 @dataclass
 class OutlookConfig:
+    """Configuration for an Outlook Web sign-in.
+
+    Attributes:
+        email: Account email address used to sign in.
+        password: Account password. Only used in the direct sign-in
+            mode; in internal mode the human signs in interactively
+            and this value is never typed anywhere.
+        username: Internal (institutional) username. When non-empty,
+            authentication runs in internal mode: the human completes
+            the sign-in by hand in the browser window.
+        outlook_url: Outlook Web entry point URL.
+    """
+
     email: str
     password: str
     username: str
     outlook_url: str = "https://outlook.office.com"
 
 
-async def setup_browser() -> (
-    tuple[Optional[Playwright], Optional[Browser], Optional[BrowserContext]]
-):
+async def resource_close(
+    closeAction: Callable[[], Awaitable[None]], resourceName: str
+) -> None:
+    """Close a browser resource, logging (not raising) any failure.
+
+    Args:
+        closeAction: Zero-argument coroutine function that closes the
+            resource, e.g. ``context.close``.
+        resourceName: Human-readable resource name for log messages.
+    """
     try:
-        playwright: Playwright = await async_playwright().start()
-        browser: Browser = await playwright.chromium.launch(headless=False)
-        context: BrowserContext = await browser.new_context(no_viewport=True)
+        await closeAction()
+    except PlaywrightError as error:
+        logger.error("Failed to close {}: {}", resourceName, error)
 
-        if context is not None:
-            context.set_default_timeout(2147483647)  # Maximum 32-bit integer value
-            LOG("Browser context created with extended timeout.")
-        else:
-            LOG("Failed to create browser context.")
 
+async def browser_setup() -> (
+    tuple[Playwright | None, Browser | None, BrowserContext | None]
+):
+    """Launch Chromium and create a browser context.
+
+    Returns:
+        A ``(playwright, browser, context)`` tuple. On failure the
+        partially started resources are closed individually and the
+        tuple is ``(None, None, None)``.
+    """
+    playwright: Playwright | None = None
+    browser: Browser | None = None
+    context: BrowserContext | None = None
+    try:
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(headless=False)
+        context = await browser.new_context(no_viewport=True)
+        context.set_default_timeout(defaultTimeoutMs)
+        logger.debug("Browser context created.")
         return playwright, browser, context
-    except Exception as e:
-        LOG(f"Error setting up browser: {e}")
+    except PlaywrightError as error:
+        logger.error("Error setting up browser: {}", error)
+        if context is not None:
+            await resource_close(context.close, "browser context")
+        if browser is not None:
+            await resource_close(browser.close, "browser")
+        if playwright is not None:
+            await resource_close(playwright.stop, "playwright driver")
         return None, None, None
 
 
-async def authenticate_outlook(context: BrowserContext, config: OutlookConfig) -> bool:
+async def outlook_authenticate(
+    context: BrowserContext, config: OutlookConfig
+) -> bool:
+    """Sign in to Outlook Web in a fresh page of the given context.
+
+    In internal mode (``config.username`` non-empty) the human is
+    expected to complete the institutional sign-in interactively; this
+    function then only waits for the mailbox UI. Otherwise the email
+    and password are filled programmatically and the optional
+    "Is this your device?" / "Stay signed in?" prompts are accepted.
+
+    Args:
+        context: Browser context to open the sign-in page in.
+        config: Sign-in parameters.
+
+    Returns:
+        True if the mailbox UI (the "New mail" button) became visible,
+        False on any failure.
+    """
     try:
         page: Page = await context.new_page()
 
-        LOG(f"Navigating to {config.outlook_url}")
+        logger.debug("Navigating to {}", config.outlook_url)
         await page.goto(config.outlook_url)
 
-        LOG("Filling email")
+        logger.debug("Filling email")
         await page.fill('input[type="email"]', config.email)
         await page.click('input[type="submit"]')
 
         if config.username:
-            LOG("Internal authentication -- please handle the authentication manually")
+            logger.debug(
+                "Internal authentication -- "
+                "please handle the authentication manually"
+            )
         else:
-            await page.wait_for_selector("#userNameInput", timeout=60000)
+            await page.wait_for_selector(
+                "#userNameInput", timeout=authWaitTimeoutMs
+            )
             await page.fill("#userNameInput", config.email)
             await page.fill("#passwordInput", config.password)
             await page.click("#submitButton")
 
-            LOG("Checking for 'Is this your device?' prompt")
+            logger.debug("Checking for 'Is this your device?' prompt")
             try:
-                await page.wait_for_selector("#trust-browser-button", timeout=60000)
+                await page.wait_for_selector(
+                    "#trust-browser-button", timeout=authWaitTimeoutMs
+                )
                 await page.click("#trust-browser-button")
-                LOG("Clicked 'Yes, this is my device'")
+                logger.debug("Clicked 'Yes, this is my device'")
             except PlaywrightTimeoutError:
-                LOG("No 'Is this your device?' prompt detected. Continuing...")
+                logger.debug(
+                    "No 'Is this your device?' prompt detected. "
+                    "Continuing..."
+                )
 
-            LOG("Checking for 'Stay signed in?' prompt")
+            logger.debug("Checking for 'Stay signed in?' prompt")
             try:
-                await page.wait_for_selector("#idSIButton9", timeout=60000)
+                await page.wait_for_selector(
+                    "#idSIButton9", timeout=authWaitTimeoutMs
+                )
                 await page.click("#idSIButton9")
-                LOG("Clicked 'Stay signed in'")
+                logger.debug("Clicked 'Stay signed in'")
             except PlaywrightTimeoutError:
-                LOG("No 'Stay signed in?' prompt detected. Continuing...")
+                logger.debug(
+                    "No 'Stay signed in?' prompt detected. Continuing..."
+                )
 
-        LOG("Waiting for the final page to load")
-        await page.wait_for_selector('[aria-label="New mail"]', timeout=60000)
-        LOG("Authenticated successfully.")
+        logger.debug("Waiting for the final page to load")
+        await page.wait_for_selector(
+            '[aria-label="New mail"]', timeout=authWaitTimeoutMs
+        )
+        logger.debug("Authenticated successfully.")
         return True
-    except Exception as e:
-        LOG(f"Error during authentication: {e}")
+    except PlaywrightError as error:
+        logger.error("Error during authentication: {}", error)
         return False
 
 
-def auth_argparse() -> Namespace:
+def authOptions_parse() -> Namespace:
+    """Parse command-line options for the authentication CLI.
+
+    Returns:
+        The parsed argument namespace (email, password, username).
+    """
     parser = ArgumentParser(
         description="An Outlook/Playwright authenticator",
         formatter_class=ArgumentDefaultsHelpFormatter,
@@ -109,33 +219,50 @@ def auth_argparse() -> Namespace:
     parser.add_argument(
         "--password", default="password", type=str, help="user password"
     )
-    parser.add_argument("--username", default="", type=str, help="internal username")
+    parser.add_argument(
+        "--username", default="", type=str, help="internal username"
+    )
 
     options: Namespace = parser.parse_args()
     return options
 
 
-async def authenticate() -> None:
-    options: Namespace = auth_argparse()
+async def authentication_run() -> None:
+    """Run the authentication CLI: set up a browser and sign in.
+
+    Whatever browser resources were started are closed individually on
+    exit, even if setup only partially succeeded.
+    """
+    options: Namespace = authOptions_parse()
     config: OutlookConfig = OutlookConfig(
-        email=options.email, password=options.password, username=options.username
+        email=options.email,
+        password=options.password,
+        username=options.username,
     )
-    playwright, browser, context = await setup_browser()
+    playwright, browser, context = await browser_setup()
     try:
-        if not context:
-            LOG("Browser context was not defined. Critical error")
+        if context is None:
+            logger.error("Browser context was not defined. Critical error")
             return
-        authenticated: bool = await authenticate_outlook(context, config)
+        authenticated: bool = await outlook_authenticate(context, config)
         if authenticated:
-            LOG("Authentication was successful. You can proceed with sending emails.")
+            logger.info(
+                "Authentication was successful. "
+                "You can proceed with sending emails."
+            )
         else:
-            LOG("Authentication failed. Please check your credentials and try again.")
+            logger.error(
+                "Authentication failed. "
+                "Please check your credentials and try again."
+            )
     finally:
-        if context and browser and playwright:
-            await context.close()
-            await browser.close()
-            await playwright.stop()
+        if context is not None:
+            await resource_close(context.close, "browser context")
+        if browser is not None:
+            await resource_close(browser.close, "browser")
+        if playwright is not None:
+            await resource_close(playwright.stop, "playwright driver")
 
 
 if __name__ == "__main__":
-    asyncio.run(authenticate())
+    asyncio.run(authentication_run())
